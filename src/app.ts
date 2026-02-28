@@ -10,10 +10,25 @@ import apiRoutes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 
 export const app = express();
+const allowedOrigins = env.CLIENT_URL.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
     exposedHeaders: ["X-Receipt-Email-Status", "X-Receipt-Email-Reason", "X-Receipt-Email-Message-Id"],
   }),

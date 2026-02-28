@@ -14,8 +14,21 @@ const env_1 = require("./config/env");
 const routes_1 = __importDefault(require("./routes"));
 const error_1 = require("./middleware/error");
 exports.app = (0, express_1.default)();
+const allowedOrigins = env_1.env.CLIENT_URL.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 exports.app.use((0, cors_1.default)({
-    origin: env_1.env.CLIENT_URL,
+    origin: (origin, callback) => {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
     exposedHeaders: ["X-Receipt-Email-Status", "X-Receipt-Email-Reason", "X-Receipt-Email-Message-Id"],
 }));

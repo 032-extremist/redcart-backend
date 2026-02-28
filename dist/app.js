@@ -18,7 +18,9 @@ exports.app = (0, express_1.default)();
 const allowedOrigins = env_1.env.CLIENT_URL.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-if (env_1.env.NODE_ENV === "production" || process.env.RENDER === "true") {
+const isHostedRuntime = process.env.RENDER === "true" ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_PROJECT_ID);
+if (env_1.env.NODE_ENV === "production" || isHostedRuntime) {
     exports.app.set("trust proxy", 1);
 }
 exports.app.use((0, cors_1.default)({

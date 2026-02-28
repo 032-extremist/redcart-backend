@@ -19,7 +19,10 @@ const allowedOrigins = env_1.env.CLIENT_URL.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
 const isHostedRuntime = process.env.RENDER === "true" ||
-    Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_ID || process.env.RAILWAY_PROJECT_ID);
+    Boolean(process.env.RAILWAY_ENVIRONMENT ||
+        process.env.RAILWAY_ENVIRONMENT_ID ||
+        process.env.RAILWAY_PROJECT_ID ||
+        process.env.FLY_APP_NAME);
 if (env_1.env.NODE_ENV === "production" || isHostedRuntime) {
     exports.app.set("trust proxy", 1);
 }

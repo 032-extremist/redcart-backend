@@ -18,7 +18,7 @@ exports.app = (0, express_1.default)();
 const allowedOrigins = env_1.env.CLIENT_URL.split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
-if (env_1.env.NODE_ENV === "production") {
+if (env_1.env.NODE_ENV === "production" || process.env.RENDER === "true") {
     exports.app.set("trust proxy", 1);
 }
 exports.app.use((0, cors_1.default)({

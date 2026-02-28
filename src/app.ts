@@ -14,7 +14,7 @@ const allowedOrigins = env.CLIENT_URL.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-if (env.NODE_ENV === "production") {
+if (env.NODE_ENV === "production" || process.env.RENDER === "true") {
   app.set("trust proxy", 1);
 }
 

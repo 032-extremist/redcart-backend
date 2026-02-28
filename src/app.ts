@@ -10,9 +10,23 @@ import apiRoutes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 
 export const app = express();
+const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, "");
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const allowedOrigins = env.CLIENT_URL.split(",")
-  .map((origin) => origin.trim())
+  .map(normalizeOrigin)
   .filter(Boolean);
+
+const wildcardOriginPatterns = allowedOrigins
+  .filter((origin) => origin.includes("*"))
+  .map((origin) => new RegExp(`^${escapeRegex(origin).replace(/\\\*/g, ".*")}$`, "i"));
+
+const isOriginAllowed = (origin: string) => {
+  const normalizedOrigin = normalizeOrigin(origin);
+  return (
+    allowedOrigins.includes(normalizedOrigin) || wildcardOriginPatterns.some((pattern) => pattern.test(normalizedOrigin))
+  );
+};
 
 const isHostedRuntime =
   process.env.RENDER === "true" ||
@@ -35,7 +49,7 @@ app.use(
         return;
       }
 
-      if (allowedOrigins.includes(origin)) {
+      if (isOriginAllowed(origin)) {
         callback(null, true);
         return;
       }

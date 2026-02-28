@@ -15,9 +15,18 @@ const env_1 = require("./config/env");
 const routes_1 = __importDefault(require("./routes"));
 const error_1 = require("./middleware/error");
 exports.app = (0, express_1.default)();
+const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, "");
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const allowedOrigins = env_1.env.CLIENT_URL.split(",")
-    .map((origin) => origin.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
+const wildcardOriginPatterns = allowedOrigins
+    .filter((origin) => origin.includes("*"))
+    .map((origin) => new RegExp(`^${escapeRegex(origin).replace(/\\\*/g, ".*")}$`, "i"));
+const isOriginAllowed = (origin) => {
+    const normalizedOrigin = normalizeOrigin(origin);
+    return (allowedOrigins.includes(normalizedOrigin) || wildcardOriginPatterns.some((pattern) => pattern.test(normalizedOrigin)));
+};
 const isHostedRuntime = process.env.RENDER === "true" ||
     Boolean(process.env.RAILWAY_ENVIRONMENT ||
         process.env.RAILWAY_ENVIRONMENT_ID ||
@@ -32,7 +41,7 @@ exports.app.use((0, cors_1.default)({
             callback(null, true);
             return;
         }
-        if (allowedOrigins.includes(origin)) {
+        if (isOriginAllowed(origin)) {
             callback(null, true);
             return;
         }

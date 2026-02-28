@@ -1,7 +1,13 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const client_1 = require("@prisma/client");
 const express_1 = require("express");
+const fs_1 = __importDefault(require("fs"));
+const multer_1 = __importDefault(require("multer"));
+const path_1 = __importDefault(require("path"));
 const zod_1 = require("zod");
 const auth_1 = require("../../middleware/auth");
 const csrf_1 = require("../../middleware/csrf");
@@ -10,6 +16,35 @@ const prisma_1 = require("../../lib/prisma");
 const slugify_1 = require("../../utils/slugify");
 const appError_1 = require("../../utils/appError");
 const router = (0, express_1.Router)();
+const uploadsDir = path_1.default.resolve(process.cwd(), "uploads", "products");
+if (!fs_1.default.existsSync(uploadsDir)) {
+    fs_1.default.mkdirSync(uploadsDir, { recursive: true });
+}
+const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const storage = multer_1.default.diskStorage({
+    destination: (_req, _file, cb) => {
+        cb(null, uploadsDir);
+    },
+    filename: (_req, file, cb) => {
+        const ext = path_1.default.extname(file.originalname).toLowerCase() || ".jpg";
+        const base = (0, slugify_1.slugify)(path_1.default.basename(file.originalname, ext)) || "product-image";
+        const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        cb(null, `${base}-${unique}${ext}`);
+    },
+});
+const uploadImage = (0, multer_1.default)({
+    storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024,
+    },
+    fileFilter: (_req, file, cb) => {
+        if (!allowedMimeTypes.has(file.mimetype)) {
+            cb(new appError_1.AppError("Only JPG, PNG, WEBP, and GIF images are allowed", 400));
+            return;
+        }
+        cb(null, true);
+    },
+});
 const createProductSchema = zod_1.z.object({
     body: zod_1.z.object({
         name: zod_1.z.string().min(2),
@@ -52,6 +87,27 @@ const stockUpdateSchema = zod_1.z.object({
     params: zod_1.z.object({ productId: zod_1.z.string().min(1) }),
 });
 router.use(auth_1.authenticate, (0, auth_1.requireRole)(client_1.Role.ADMIN));
+router.post("/products/image", csrf_1.requireCsrf, uploadImage.single("image"), async (req, res, next) => {
+    try {
+        if (!req.file) {
+            throw new appError_1.AppError("Image file is required", 400);
+        }
+        const host = req.get("host");
+        if (!host) {
+            throw new appError_1.AppError("Unable to resolve upload host", 500);
+        }
+        const imageUrl = `${req.protocol}://${host}/uploads/products/${req.file.filename}`;
+        res.status(201).json({
+            imageUrl,
+            fileName: req.file.filename,
+            size: req.file.size,
+            mimeType: req.file.mimetype,
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 router.get("/analytics/sales", async (_req, res, next) => {
     try {
         const [ordersCount, revenueAgg, pendingPayments, topProducts] = await Promise.all([

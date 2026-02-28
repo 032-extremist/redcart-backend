@@ -38,6 +38,13 @@ const errorHandler = (error, _req, res, _next) => {
             code: error.errorCode ?? "PRISMA_INIT_ERROR",
         });
     }
+    if (error && typeof error === "object" && "name" in error && error.name === "MulterError") {
+        const multerCode = error.code;
+        if (multerCode === "LIMIT_FILE_SIZE") {
+            return res.status(400).json({ message: "Image upload failed: file exceeds 5MB limit" });
+        }
+        return res.status(400).json({ message: "Image upload failed" });
+    }
     if (error instanceof zod_1.ZodError) {
         return res.status(422).json({
             message: "Validation failed",

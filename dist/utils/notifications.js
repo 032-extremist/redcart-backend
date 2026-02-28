@@ -96,13 +96,13 @@ const sendOrderConfirmationEmail = async (payload) => {
         subject: `RedCart Order Confirmation - ${payload.orderId}`,
         text: `Hello ${payload.name}, your order ${payload.orderId} has been confirmed. Total paid: ${payload.total.toFixed(2)} KES.`,
         html: `
-        <div style="font-family: Arial, sans-serif; color: #111;">
-          <h2 style="color: #C40000;">RedCart Order Confirmed</h2>
-          <p>Hello ${payload.name},</p>
-          <p>Your order <strong>${payload.orderId}</strong> has been confirmed.</p>
-          <p>Total paid: <strong>${payload.total.toFixed(2)} KES</strong></p>
-        </div>
-      `,
+      <div style="font-family: Arial, sans-serif; color: #111;">
+        <h2 style="color: #C40000;">RedCart Order Confirmed</h2>
+        <p>Hello ${payload.name},</p>
+        <p>Your order <strong>${payload.orderId}</strong> has been confirmed.</p>
+        <p>Total paid: <strong>${payload.total.toFixed(2)} KES</strong></p>
+      </div>
+    `,
     });
 };
 exports.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
@@ -112,14 +112,14 @@ const sendReceiptCopyEmail = async (payload) => {
         subject: `RedCart Receipt Copy - ${payload.receiptNumber}`,
         text: `Hello ${payload.name}, attached is your receipt copy (${payload.receiptNumber}) for order ${payload.orderId}.`,
         html: `
-        <div style="font-family: Arial, sans-serif; color: #111;">
-          <h2 style="color: #C40000;">RedCart Receipt Copy</h2>
-          <p>Hello ${payload.name},</p>
-          <p>As requested, a copy of your receipt is attached.</p>
-          <p>Receipt: <strong>${payload.receiptNumber}</strong></p>
-          <p>Order: <strong>${payload.orderId}</strong></p>
-        </div>
-      `,
+      <div style="font-family: Arial, sans-serif; color: #111;">
+        <h2 style="color: #C40000;">RedCart Receipt Copy</h2>
+        <p>Hello ${payload.name},</p>
+        <p>As requested, a copy of your receipt is attached.</p>
+        <p>Receipt: <strong>${payload.receiptNumber}</strong></p>
+        <p>Order: <strong>${payload.orderId}</strong></p>
+      </div>
+    `,
         attachments: [
             {
                 filename: `${payload.receiptNumber}.pdf`,

@@ -13,6 +13,13 @@ import receiptsRoutes from "../modules/receipts/receipts.routes";
 
 const router = Router();
 
+router.get("/", (_req, res) => {
+  res.json({
+    service: "RedCart API",
+    health: "/api/v1/health",
+  });
+});
+
 router.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "RedCart API" });
 });

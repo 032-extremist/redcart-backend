@@ -16,6 +16,12 @@ const wishlist_routes_1 = __importDefault(require("../modules/wishlist/wishlist.
 const ai_routes_1 = __importDefault(require("../modules/ai/ai.routes"));
 const receipts_routes_1 = __importDefault(require("../modules/receipts/receipts.routes"));
 const router = (0, express_1.Router)();
+router.get("/", (_req, res) => {
+    res.json({
+        service: "RedCart API",
+        health: "/api/v1/health",
+    });
+});
 router.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "RedCart API" });
 });

@@ -9,6 +9,8 @@ const validate_1 = require("../../middleware/validate");
 const prisma_1 = require("../../lib/prisma");
 const appError_1 = require("../../utils/appError");
 const notifications_1 = require("../../utils/notifications");
+const logger_1 = require("../../config/logger");
+const mpesa_1 = require("../../lib/mpesa");
 const receipts_service_1 = require("../receipts/receipts.service");
 const router = (0, express_1.Router)();
 const checkoutSchema = zod_1.z.object({
@@ -30,6 +32,160 @@ const orderIdSchema = zod_1.z.object({
     query: zod_1.z.object({}),
     params: zod_1.z.object({ orderId: zod_1.z.string().min(1) }),
 });
+const toJsonRecord = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value;
+    }
+    return {};
+};
+const mergeMpesaMeta = (current, patch) => {
+    const existing = toJsonRecord(current);
+    const currentMpesa = toJsonRecord(existing.mpesa);
+    return {
+        ...existing,
+        mpesa: {
+            ...currentMpesa,
+            ...patch,
+        },
+    };
+};
+const sendOrderConfirmationEmailSafely = async (input) => {
+    try {
+        await (0, notifications_1.sendOrderConfirmationEmail)(input);
+    }
+    catch (error) {
+        logger_1.logger.error({
+            error,
+            orderId: input.orderId,
+            email: input.email,
+        }, "Failed to send order confirmation email during order reconciliation");
+    }
+};
+const ensureReceiptSafely = async (paymentId) => {
+    try {
+        await (0, receipts_service_1.ensureReceiptForSuccessfulPayment)(paymentId);
+    }
+    catch (error) {
+        logger_1.logger.error({
+            error,
+            paymentId,
+        }, "Failed to ensure receipt during order reconciliation");
+    }
+};
+const reconcilePendingMpesaPaymentsForUser = async (userId) => {
+    const pendingPayments = await prisma_1.prisma.payment.findMany({
+        where: {
+            provider: "MPESA",
+            status: client_1.PaymentStatus.PENDING,
+            order: {
+                userId,
+            },
+        },
+        include: {
+            order: {
+                select: {
+                    id: true,
+                    shippingName: true,
+                    shippingEmail: true,
+                    total: true,
+                },
+            },
+        },
+    });
+    for (const payment of pendingPayments) {
+        const mpesaMeta = toJsonRecord(toJsonRecord(payment.meta).mpesa);
+        const checkoutRequestId = typeof mpesaMeta.checkoutRequestId === "string" && mpesaMeta.checkoutRequestId.trim().length > 0
+            ? mpesaMeta.checkoutRequestId.trim()
+            : null;
+        if (!checkoutRequestId) {
+            continue;
+        }
+        try {
+            const query = await (0, mpesa_1.queryMpesaStkPushStatus)({ checkoutRequestId });
+            const queryPatch = {
+                lastStatusQueryAt: new Date().toISOString(),
+                statusQuerySource: "ORDERS_LIST",
+                queryResponseCode: query.responseCode,
+                queryResponseDescription: query.responseDescription,
+                queryMerchantRequestId: query.merchantRequestId || null,
+                queryCheckoutRequestId: query.checkoutRequestId,
+                queryResultCode: query.resultCode,
+                queryResultDesc: query.resultDesc,
+                queryRaw: query.raw,
+            };
+            if (query.resultCode === 0) {
+                const receiptNumber = query.mpesaReceiptNumber || payment.transactionRef || query.checkoutRequestId;
+                await prisma_1.prisma.$transaction(async (tx) => {
+                    await tx.payment.update({
+                        where: { id: payment.id },
+                        data: {
+                            status: client_1.PaymentStatus.SUCCESS,
+                            transactionRef: receiptNumber,
+                            meta: mergeMpesaMeta(payment.meta, {
+                                ...queryPatch,
+                                status: "SUCCESS",
+                                resultCode: 0,
+                                resultDesc: query.resultDesc ?? "Payment successful",
+                                mpesaReceiptNumber: query.mpesaReceiptNumber,
+                                receiptNumber,
+                            }),
+                        },
+                    });
+                    await tx.order.update({
+                        where: { id: payment.orderId },
+                        data: { status: "CONFIRMED" },
+                    });
+                });
+                await sendOrderConfirmationEmailSafely({
+                    orderId: payment.orderId,
+                    email: payment.order.shippingEmail,
+                    name: payment.order.shippingName,
+                    total: Number(payment.order.total),
+                });
+                await ensureReceiptSafely(payment.id);
+            }
+            else if (typeof query.resultCode === "number") {
+                await prisma_1.prisma.$transaction(async (tx) => {
+                    await tx.payment.update({
+                        where: { id: payment.id },
+                        data: {
+                            status: client_1.PaymentStatus.FAILED,
+                            transactionRef: payment.transactionRef || query.checkoutRequestId,
+                            meta: mergeMpesaMeta(payment.meta, {
+                                ...queryPatch,
+                                status: "FAILED",
+                                resultCode: query.resultCode,
+                                resultDesc: query.resultDesc ?? "Payment failed",
+                            }),
+                        },
+                    });
+                    await tx.order.update({
+                        where: { id: payment.orderId },
+                        data: { status: "PENDING_PAYMENT" },
+                    });
+                });
+            }
+            else {
+                await prisma_1.prisma.payment.update({
+                    where: { id: payment.id },
+                    data: {
+                        meta: mergeMpesaMeta(payment.meta, {
+                            ...queryPatch,
+                            status: "PENDING",
+                        }),
+                    },
+                });
+            }
+        }
+        catch (error) {
+            logger_1.logger.error({
+                error,
+                paymentId: payment.id,
+                checkoutRequestId,
+            }, "Failed to reconcile pending M-Pesa payment from orders route");
+        }
+    }
+};
 router.use(auth_1.authenticate);
 router.post("/checkout", csrf_1.requireCsrf, (0, validate_1.validate)(checkoutSchema), async (req, res, next) => {
     try {
@@ -151,6 +307,7 @@ router.post("/checkout", csrf_1.requireCsrf, (0, validate_1.validate)(checkoutSc
 });
 router.get("/", async (req, res, next) => {
     try {
+        await reconcilePendingMpesaPaymentsForUser(req.auth.userId);
         const orders = await prisma_1.prisma.order.findMany({
             where: { userId: req.auth.userId },
             include: {
@@ -193,6 +350,7 @@ router.get("/", async (req, res, next) => {
 });
 router.get("/:orderId/status", (0, validate_1.validate)(orderIdSchema), async (req, res, next) => {
     try {
+        await reconcilePendingMpesaPaymentsForUser(req.auth.userId);
         const order = await prisma_1.prisma.order.findFirst({
             where: {
                 id: req.params.orderId,

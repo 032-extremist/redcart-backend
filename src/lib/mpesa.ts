@@ -130,6 +130,22 @@ export interface MpesaStkPushResult {
   requestTimestamp: string;
 }
 
+export interface MpesaStkQueryInput {
+  checkoutRequestId: string;
+}
+
+export interface MpesaStkQueryResult {
+  merchantRequestId: string;
+  checkoutRequestId: string;
+  responseCode: string;
+  responseDescription: string;
+  resultCode: number | null;
+  resultDesc: string | null;
+  mpesaReceiptNumber: string | null;
+  requestTimestamp: string;
+  raw: unknown;
+}
+
 export const initiateMpesaStkPush = async (input: MpesaStkPushInput): Promise<MpesaStkPushResult> => {
   requireMpesaConfig();
 
@@ -187,5 +203,75 @@ export const initiateMpesaStkPush = async (input: MpesaStkPushInput): Promise<Mp
     responseDescription: json.ResponseDescription ?? "",
     customerMessage: json.CustomerMessage ?? "",
     requestTimestamp: timestamp,
+  };
+};
+
+const toOptionalNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+export const queryMpesaStkPushStatus = async (input: MpesaStkQueryInput): Promise<MpesaStkQueryResult> => {
+  requireMpesaConfig();
+
+  const timestamp = getTimestamp();
+  const password = Buffer.from(`${env.MPESA_SHORTCODE!}${env.MPESA_PASSKEY!}${timestamp}`).toString("base64");
+  const accessToken = await getMpesaAccessToken();
+
+  const payload = {
+    BusinessShortCode: env.MPESA_SHORTCODE!,
+    Password: password,
+    Timestamp: timestamp,
+    CheckoutRequestID: input.checkoutRequestId,
+  };
+
+  const response = await fetch(`${getMpesaBaseUrl()}/mpesa/stkpushquery/v1/query`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const json = (await response.json()) as {
+    MerchantRequestID?: string;
+    CheckoutRequestID?: string;
+    ResponseCode?: string;
+    ResponseDescription?: string;
+    ResultCode?: string | number;
+    ResultDesc?: string;
+    MpesaReceiptNumber?: string;
+    errorMessage?: string;
+    errorCode?: string;
+  };
+
+  if (!response.ok) {
+    const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK status query failed";
+    throw new AppError(message, 502);
+  }
+
+  if (!json.ResponseCode) {
+    throw new AppError("Invalid M-Pesa STK status response", 502);
+  }
+
+  return {
+    merchantRequestId: json.MerchantRequestID ?? "",
+    checkoutRequestId: json.CheckoutRequestID ?? input.checkoutRequestId,
+    responseCode: json.ResponseCode,
+    responseDescription: json.ResponseDescription ?? "",
+    resultCode: toOptionalNumber(json.ResultCode),
+    resultDesc: json.ResultDesc ?? null,
+    mpesaReceiptNumber: json.MpesaReceiptNumber ?? null,
+    requestTimestamp: timestamp,
+    raw: json,
   };
 };

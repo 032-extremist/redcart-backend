@@ -8,7 +8,12 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/appError";
 import { sendOrderConfirmationEmail } from "../../utils/notifications";
 import { env } from "../../config/env";
-import { initiateMpesaStkPush, normalizeKenyanPhoneNumber } from "../../lib/mpesa";
+import { logger } from "../../config/logger";
+import {
+  initiateMpesaStkPush,
+  normalizeKenyanPhoneNumber,
+  queryMpesaStkPushStatus,
+} from "../../lib/mpesa";
 import { ensureReceiptForSuccessfulPayment } from "../receipts/receipts.service";
 
 const router = Router();
@@ -66,6 +71,177 @@ const buildMpesaCallbackUrl = (paymentId: string) => {
   }
 
   return `${base}/api/v1/payments/mpesa/callback/${paymentId}`;
+};
+
+const getMpesaMeta = (meta: unknown) => {
+  const existing = toJsonRecord(meta);
+  return toJsonRecord(existing.mpesa);
+};
+
+const sendOrderConfirmationEmailSafely = async (input: {
+  orderId: string;
+  email: string;
+  name: string;
+  total: number;
+}) => {
+  try {
+    await sendOrderConfirmationEmail(input);
+  } catch (error) {
+    logger.error(
+      {
+        error,
+        orderId: input.orderId,
+        email: input.email,
+      },
+      "Failed to send order confirmation email after payment success",
+    );
+  }
+};
+
+const ensureReceiptSafely = async (paymentId: string) => {
+  try {
+    await ensureReceiptForSuccessfulPayment(paymentId);
+  } catch (error) {
+    logger.error(
+      {
+        error,
+        paymentId,
+      },
+      "Failed to ensure receipt after payment success",
+    );
+  }
+};
+
+const findUserMpesaPayment = (paymentId: string, userId: string) =>
+  prisma.payment.findFirst({
+    where: {
+      id: paymentId,
+      provider: "MPESA",
+      order: {
+        userId,
+      },
+    },
+    include: {
+      order: true,
+    },
+  });
+
+const reconcilePendingMpesaPayment = async (paymentId: string, userId: string) => {
+  const payment = await findUserMpesaPayment(paymentId, userId);
+  if (!payment) {
+    throw new AppError("Payment not found", 404);
+  }
+
+  if (payment.status !== PaymentStatus.PENDING) {
+    return payment;
+  }
+
+  const mpesaMeta = getMpesaMeta(payment.meta);
+  const checkoutRequestId =
+    typeof mpesaMeta.checkoutRequestId === "string" && mpesaMeta.checkoutRequestId.trim().length > 0
+      ? mpesaMeta.checkoutRequestId.trim()
+      : null;
+
+  if (!checkoutRequestId) {
+    return payment;
+  }
+
+  try {
+    const query = await queryMpesaStkPushStatus({ checkoutRequestId });
+    const queryPatch: JsonRecord = {
+      lastStatusQueryAt: new Date().toISOString(),
+      statusQuerySource: "STK_QUERY",
+      queryResponseCode: query.responseCode,
+      queryResponseDescription: query.responseDescription,
+      queryMerchantRequestId: query.merchantRequestId || null,
+      queryCheckoutRequestId: query.checkoutRequestId,
+      queryResultCode: query.resultCode,
+      queryResultDesc: query.resultDesc,
+      queryRaw: query.raw,
+    };
+
+    if (query.resultCode === 0) {
+      const receiptNumber = query.mpesaReceiptNumber || payment.transactionRef || query.checkoutRequestId;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: PaymentStatus.SUCCESS,
+            transactionRef: receiptNumber,
+            meta: mergeMpesaMeta(payment.meta, {
+              ...queryPatch,
+              status: "SUCCESS",
+              resultCode: 0,
+              resultDesc: query.resultDesc ?? "Payment successful",
+              mpesaReceiptNumber: query.mpesaReceiptNumber,
+              receiptNumber,
+            }),
+          },
+        });
+
+        await tx.order.update({
+          where: { id: payment.orderId },
+          data: { status: "CONFIRMED" },
+        });
+      });
+
+      await sendOrderConfirmationEmailSafely({
+        orderId: payment.orderId,
+        email: payment.order.shippingEmail,
+        name: payment.order.shippingName,
+        total: Number(payment.order.total),
+      });
+      await ensureReceiptSafely(payment.id);
+    } else if (typeof query.resultCode === "number") {
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: PaymentStatus.FAILED,
+            transactionRef: payment.transactionRef || query.checkoutRequestId,
+            meta: mergeMpesaMeta(payment.meta, {
+              ...queryPatch,
+              status: "FAILED",
+              resultCode: query.resultCode,
+              resultDesc: query.resultDesc ?? "Payment failed",
+            }),
+          },
+        });
+
+        await tx.order.update({
+          where: { id: payment.orderId },
+          data: { status: "PENDING_PAYMENT" },
+        });
+      });
+    } else {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          meta: mergeMpesaMeta(payment.meta, {
+            ...queryPatch,
+            status: "PENDING",
+          }),
+        },
+      });
+    }
+  } catch (error) {
+    logger.error(
+      {
+        error,
+        paymentId: payment.id,
+        checkoutRequestId,
+      },
+      "Failed to reconcile pending M-Pesa payment via STK query",
+    );
+  }
+
+  const refreshed = await findUserMpesaPayment(paymentId, userId);
+  if (!refreshed) {
+    throw new AppError("Payment not found", 404);
+  }
+
+  return refreshed;
 };
 
 router.post("/mpesa/callback/:paymentId", validate(callbackParamsSchema), async (req, res, next) => {
@@ -136,14 +312,14 @@ router.post("/mpesa/callback/:paymentId", validate(callbackParamsSchema), async 
           });
         });
 
-        await sendOrderConfirmationEmail({
+        await sendOrderConfirmationEmailSafely({
           orderId: payment.orderId,
           email: payment.order.shippingEmail,
           name: payment.order.shippingName,
           total: Number(payment.order.total),
         });
 
-        await ensureReceiptForSuccessfulPayment(payment.id);
+        await ensureReceiptSafely(payment.id);
       }
 
       return res.json({
@@ -270,36 +446,18 @@ router.post("/mpesa/stk-push", requireCsrf, validate(stkPushSchema), async (req,
 
 router.get("/mpesa/:paymentId/status", validate(paymentStatusSchema), async (req, res, next) => {
   try {
-    await ensureReceiptForSuccessfulPayment(req.params.paymentId);
-
-    const payment = await prisma.payment.findFirst({
-      where: {
-        id: req.params.paymentId,
-        provider: "MPESA",
-        order: {
-          userId: req.auth!.userId,
-        },
-      },
-      include: {
-        order: {
-          select: {
-            id: true,
-            status: true,
-          },
-        },
-      },
-    });
-
-    if (!payment) {
-      throw new AppError("Payment not found", 404);
-    }
+    const payment = await reconcilePendingMpesaPayment(req.params.paymentId, req.auth!.userId);
+    await ensureReceiptSafely(payment.id);
 
     res.json({
       id: payment.id,
       status: payment.status,
       amount: Number(payment.amount),
       transactionRef: payment.transactionRef,
-      order: payment.order,
+      order: {
+        id: payment.order.id,
+        status: payment.order.status,
+      },
       meta: payment.meta,
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.initiateMpesaStkPush = exports.verifyMpesaConnection = exports.normalizeKenyanPhoneNumber = void 0;
+exports.queryMpesaStkPushStatus = exports.initiateMpesaStkPush = exports.verifyMpesaConnection = exports.normalizeKenyanPhoneNumber = void 0;
 const env_1 = require("../config/env");
 const appError_1 = require("../utils/appError");
 const TOKEN_BUFFER_SECONDS = 60;
@@ -138,3 +138,53 @@ const initiateMpesaStkPush = async (input) => {
     };
 };
 exports.initiateMpesaStkPush = initiateMpesaStkPush;
+const toOptionalNumber = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === "string" && value.trim() !== "") {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+};
+const queryMpesaStkPushStatus = async (input) => {
+    requireMpesaConfig();
+    const timestamp = getTimestamp();
+    const password = Buffer.from(`${env_1.env.MPESA_SHORTCODE}${env_1.env.MPESA_PASSKEY}${timestamp}`).toString("base64");
+    const accessToken = await getMpesaAccessToken();
+    const payload = {
+        BusinessShortCode: env_1.env.MPESA_SHORTCODE,
+        Password: password,
+        Timestamp: timestamp,
+        CheckoutRequestID: input.checkoutRequestId,
+    };
+    const response = await fetch(`${getMpesaBaseUrl()}/mpesa/stkpushquery/v1/query`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    });
+    const json = (await response.json());
+    if (!response.ok) {
+        const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK status query failed";
+        throw new appError_1.AppError(message, 502);
+    }
+    if (!json.ResponseCode) {
+        throw new appError_1.AppError("Invalid M-Pesa STK status response", 502);
+    }
+    return {
+        merchantRequestId: json.MerchantRequestID ?? "",
+        checkoutRequestId: json.CheckoutRequestID ?? input.checkoutRequestId,
+        responseCode: json.ResponseCode,
+        responseDescription: json.ResponseDescription ?? "",
+        resultCode: toOptionalNumber(json.ResultCode),
+        resultDesc: json.ResultDesc ?? null,
+        mpesaReceiptNumber: json.MpesaReceiptNumber ?? null,
+        requestTimestamp: timestamp,
+        raw: json,
+    };
+};
+exports.queryMpesaStkPushStatus = queryMpesaStkPushStatus;

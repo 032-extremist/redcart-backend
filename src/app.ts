@@ -10,6 +10,7 @@ import apiRoutes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 
 export const app = express();
+app.disable("etag");
 const normalizeOrigin = (origin: string) => origin.trim().replace(/\/+$/, "");
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -69,6 +70,13 @@ app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  next();
+});
 
 app.use(
   "/api",

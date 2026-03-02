@@ -262,6 +262,22 @@ export const ensureReceiptForSuccessfulPayment = async (paymentId: string) => {
         });
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          const existingByPayment = await tx.receipt.findUnique({
+            where: { paymentId: current.id },
+            select: getReceiptProjection,
+          });
+          if (existingByPayment) {
+            return existingByPayment;
+          }
+
+          const existingByOrder = await tx.receipt.findUnique({
+            where: { orderId: current.order.id },
+            select: getReceiptProjection,
+          });
+          if (existingByOrder) {
+            return existingByOrder;
+          }
+
           continue;
         }
 
@@ -321,8 +337,8 @@ export const getReceiptByIdForUser = async (receiptId: string, userId: string) =
   };
 };
 
-export const getReceiptByOrderForUser = async (orderId: string, userId: string) => {
-  const receipt = await prisma.receipt.findFirst({
+const findReceiptByOrderForUser = (orderId: string, userId: string) =>
+  prisma.receipt.findFirst({
     where: {
       orderId,
       order: {
@@ -353,6 +369,31 @@ export const getReceiptByOrderForUser = async (orderId: string, userId: string) 
       },
     },
   });
+
+export const getReceiptByOrderForUser = async (orderId: string, userId: string) => {
+  let receipt = await findReceiptByOrderForUser(orderId, userId);
+
+  if (!receipt) {
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderId,
+        userId,
+      },
+      select: {
+        payment: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (order?.payment?.status === PaymentStatus.SUCCESS) {
+      await ensureReceiptForSuccessfulPayment(order.payment.id).catch(() => null);
+      receipt = await findReceiptByOrderForUser(orderId, userId);
+    }
+  }
 
   if (!receipt) {
     throw new AppError("Receipt not found", 404);

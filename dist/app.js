@@ -15,6 +15,7 @@ const env_1 = require("./config/env");
 const routes_1 = __importDefault(require("./routes"));
 const error_1 = require("./middleware/error");
 exports.app = (0, express_1.default)();
+exports.app.disable("etag");
 const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, "");
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const allowedOrigins = env_1.env.CLIENT_URL.split(",")
@@ -57,6 +58,13 @@ exports.app.use(express_1.default.json({ limit: "1mb" }));
 exports.app.use((0, cookie_parser_1.default)());
 exports.app.use((0, morgan_1.default)(env_1.env.NODE_ENV === "production" ? "combined" : "dev"));
 exports.app.use("/uploads", express_1.default.static(path_1.default.resolve(process.cwd(), "uploads")));
+exports.app.use("/api", (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    next();
+});
 exports.app.use("/api", (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000,
     max: 300,

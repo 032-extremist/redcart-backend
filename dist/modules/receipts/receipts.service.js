@@ -180,6 +180,20 @@ const ensureReceiptForSuccessfulPayment = async (paymentId) => {
             }
             catch (error) {
                 if (error instanceof client_1.Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+                    const existingByPayment = await tx.receipt.findUnique({
+                        where: { paymentId: current.id },
+                        select: getReceiptProjection,
+                    });
+                    if (existingByPayment) {
+                        return existingByPayment;
+                    }
+                    const existingByOrder = await tx.receipt.findUnique({
+                        where: { orderId: current.order.id },
+                        select: getReceiptProjection,
+                    });
+                    if (existingByOrder) {
+                        return existingByOrder;
+                    }
                     continue;
                 }
                 throw error;
@@ -234,38 +248,59 @@ const getReceiptByIdForUser = async (receiptId, userId) => {
     };
 };
 exports.getReceiptByIdForUser = getReceiptByIdForUser;
+const findReceiptByOrderForUser = (orderId, userId) => prisma_1.prisma.receipt.findFirst({
+    where: {
+        orderId,
+        order: {
+            userId,
+        },
+    },
+    include: {
+        order: {
+            select: {
+                id: true,
+                createdAt: true,
+                shippingName: true,
+                shippingEmail: true,
+                shippingPhone: true,
+                shippingStreet: true,
+                shippingCity: true,
+                shippingCountry: true,
+            },
+        },
+        payment: {
+            select: {
+                id: true,
+                provider: true,
+                status: true,
+                transactionRef: true,
+                createdAt: true,
+            },
+        },
+    },
+});
 const getReceiptByOrderForUser = async (orderId, userId) => {
-    const receipt = await prisma_1.prisma.receipt.findFirst({
-        where: {
-            orderId,
-            order: {
+    let receipt = await findReceiptByOrderForUser(orderId, userId);
+    if (!receipt) {
+        const order = await prisma_1.prisma.order.findFirst({
+            where: {
+                id: orderId,
                 userId,
             },
-        },
-        include: {
-            order: {
-                select: {
-                    id: true,
-                    createdAt: true,
-                    shippingName: true,
-                    shippingEmail: true,
-                    shippingPhone: true,
-                    shippingStreet: true,
-                    shippingCity: true,
-                    shippingCountry: true,
+            select: {
+                payment: {
+                    select: {
+                        id: true,
+                        status: true,
+                    },
                 },
             },
-            payment: {
-                select: {
-                    id: true,
-                    provider: true,
-                    status: true,
-                    transactionRef: true,
-                    createdAt: true,
-                },
-            },
-        },
-    });
+        });
+        if (order?.payment?.status === client_1.PaymentStatus.SUCCESS) {
+            await (0, exports.ensureReceiptForSuccessfulPayment)(order.payment.id).catch(() => null);
+            receipt = await findReceiptByOrderForUser(orderId, userId);
+        }
+    }
     if (!receipt) {
         throw new appError_1.AppError("Receipt not found", 404);
     }

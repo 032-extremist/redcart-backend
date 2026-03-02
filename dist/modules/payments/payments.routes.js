@@ -19,10 +19,15 @@ const callbackParamsSchema = zod_1.z.object({
     query: zod_1.z.object({}),
     params: zod_1.z.object({ paymentId: zod_1.z.string().min(1) }),
 });
+const phoneNumberSchema = zod_1.z
+    .string({ required_error: "Phone number is required" })
+    .trim()
+    .min(1, "Phone number is required")
+    .refine((value) => value.replace(/\D/g, "").length >= 10, "Phone number must be at least 10 digits.");
 const stkPushSchema = zod_1.z.object({
     body: zod_1.z.object({
-        paymentId: zod_1.z.string().min(1),
-        phoneNumber: zod_1.z.string().min(7),
+        paymentId: zod_1.z.string().min(1, "Payment ID is required"),
+        phoneNumber: phoneNumberSchema,
     }),
     query: zod_1.z.object({}),
     params: zod_1.z.object({}),

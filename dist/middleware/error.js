@@ -16,7 +16,10 @@ const notFoundHandler = (req, res) => {
 exports.notFoundHandler = notFoundHandler;
 const errorHandler = (error, _req, res, _next) => {
     if (error instanceof appError_1.AppError) {
-        return res.status(error.statusCode).json({ message: error.message });
+        return res.status(error.statusCode).json({
+            message: error.message,
+            ...(error.details !== undefined ? { errors: error.details } : {}),
+        });
     }
     if (error instanceof client_1.Prisma.PrismaClientKnownRequestError) {
         logger_1.logger.error({ error }, "Prisma request error");

@@ -13,16 +13,33 @@ const logger_1 = require("../../config/logger");
 const mpesa_1 = require("../../lib/mpesa");
 const receipts_service_1 = require("../receipts/receipts.service");
 const router = (0, express_1.Router)();
+const minChars = (label, min) => zod_1.z
+    .string({ required_error: `${label} is required` })
+    .trim()
+    .min(min, `${label} must be at least ${min} characters.`);
+const shippingPhoneSchema = zod_1.z
+    .string({ required_error: "Phone number is required" })
+    .trim()
+    .min(1, "Phone number is required")
+    .refine((value) => value.replace(/\D/g, "").length >= 10, "Phone number must be at least 10 digits.");
 const checkoutSchema = zod_1.z.object({
     body: zod_1.z.object({
         paymentMethod: zod_1.z.nativeEnum(client_1.PaymentMethod),
-        shippingName: zod_1.z.string().min(2),
-        shippingPhone: zod_1.z.string().min(7),
-        shippingEmail: zod_1.z.string().email(),
-        shippingStreet: zod_1.z.string().min(3),
-        shippingCity: zod_1.z.string().min(2),
-        shippingCountry: zod_1.z.string().min(2),
-        mpesaPayerName: zod_1.z.string().min(2).max(120).optional(),
+        shippingName: minChars("Full name", 2),
+        shippingPhone: shippingPhoneSchema,
+        shippingEmail: zod_1.z
+            .string({ required_error: "Email is required" })
+            .trim()
+            .email("Enter a valid email address."),
+        shippingStreet: minChars("Street address", 3),
+        shippingCity: minChars("City", 2),
+        shippingCountry: minChars("Country", 2),
+        mpesaPayerName: zod_1.z
+            .string()
+            .trim()
+            .min(2, "M-Pesa registered name must be at least 2 characters.")
+            .max(120, "M-Pesa registered name is too long.")
+            .optional(),
     }),
     query: zod_1.z.object({}),
     params: zod_1.z.object({}),

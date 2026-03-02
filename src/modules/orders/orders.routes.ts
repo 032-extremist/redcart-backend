@@ -13,16 +13,36 @@ import { ensureReceiptForSuccessfulPayment } from "../receipts/receipts.service"
 
 const router = Router();
 
+const minChars = (label: string, min: number) =>
+  z
+    .string({ required_error: `${label} is required` })
+    .trim()
+    .min(min, `${label} must be at least ${min} characters.`);
+
+const shippingPhoneSchema = z
+  .string({ required_error: "Phone number is required" })
+  .trim()
+  .min(1, "Phone number is required")
+  .refine((value) => value.replace(/\D/g, "").length >= 10, "Phone number must be at least 10 digits.");
+
 const checkoutSchema = z.object({
   body: z.object({
     paymentMethod: z.nativeEnum(PaymentMethod),
-    shippingName: z.string().min(2),
-    shippingPhone: z.string().min(7),
-    shippingEmail: z.string().email(),
-    shippingStreet: z.string().min(3),
-    shippingCity: z.string().min(2),
-    shippingCountry: z.string().min(2),
-    mpesaPayerName: z.string().min(2).max(120).optional(),
+    shippingName: minChars("Full name", 2),
+    shippingPhone: shippingPhoneSchema,
+    shippingEmail: z
+      .string({ required_error: "Email is required" })
+      .trim()
+      .email("Enter a valid email address."),
+    shippingStreet: minChars("Street address", 3),
+    shippingCity: minChars("City", 2),
+    shippingCountry: minChars("Country", 2),
+    mpesaPayerName: z
+      .string()
+      .trim()
+      .min(2, "M-Pesa registered name must be at least 2 characters.")
+      .max(120, "M-Pesa registered name is too long.")
+      .optional(),
   }),
   query: z.object({}),
   params: z.object({}),

@@ -10,8 +10,21 @@ export const validate = (schema: AnyZodObject) => (req: Request, _res: Response,
   });
 
   if (!parsed.success) {
-    const message = parsed.error.issues.map((issue) => issue.message).join(", ");
-    return next(new AppError(message || "Validation failed", 422));
+    const issues = parsed.error.issues.map((issue) => {
+      const path = issue.path.join(".");
+      return {
+        path,
+        message: issue.message,
+      };
+    });
+
+    const message =
+      issues
+        .map((issue) => `${issue.path || "request"}: ${issue.message}`)
+        .join("; ")
+        .trim() || "Validation failed";
+
+    return next(new AppError(message, 422, issues));
   }
 
   req.body = parsed.data.body;

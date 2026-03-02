@@ -55,9 +55,14 @@ const envSchema = z.object({
   SMTP_HOST: optionalString,
   SMTP_PORT: optionalNumber,
   SMTP_SECURE: envBoolean.default(false),
+  SMTP_FORCE_IPV4: envBoolean.default(true),
   SMTP_USER: optionalString,
   SMTP_PASS: optionalString,
   SMTP_FROM: optionalString,
+  EMAIL_PROVIDER: z.enum(["smtp", "resend"]).default("smtp"),
+  RESEND_API_KEY: optionalString,
+  RESEND_FROM: optionalString,
+  RESEND_API_BASE_URL: optionalUrl,
 });
 
 const parsed = envSchema.safeParse(process.env);

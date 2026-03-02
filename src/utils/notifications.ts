@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import dns from "node:dns/promises";
+import net from "node:net";
 import { env } from "../config/env";
 import { logger } from "../config/logger";
 
@@ -23,10 +25,21 @@ export type EmailDispatchResult = {
   messageId?: string;
 };
 
+type EmailPayload = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+};
+
 let transporter: nodemailer.Transporter | null = null;
+let transporterKey: string | null = null;
 
 const smtpConfigured = () =>
   Boolean(env.SMTP_ENABLED && env.SMTP_HOST?.trim() && env.SMTP_PORT && env.SMTP_FROM?.trim());
+
+const resendConfigured = () => Boolean(env.RESEND_API_KEY?.trim() && (env.RESEND_FROM?.trim() || env.SMTP_FROM?.trim()));
 
 const getSmtpAuth = () => {
   const user = env.SMTP_USER?.trim();
@@ -39,46 +52,214 @@ const getSmtpAuth = () => {
   return { user, pass };
 };
 
-const getTransporter = () => {
-  if (transporter) {
+const resolveSmtpConnectHost = async (host: string) => {
+  const normalized = host.trim();
+  if (!normalized || net.isIP(normalized)) {
+    return {
+      connectHost: normalized,
+      servername: undefined as string | undefined,
+      source: "literal",
+    };
+  }
+
+  if (!env.SMTP_FORCE_IPV4) {
+    return {
+      connectHost: normalized,
+      servername: normalized,
+      source: "hostname",
+    };
+  }
+
+  try {
+    const resolved = await dns.lookup(normalized, { family: 4 });
+    return {
+      connectHost: resolved.address,
+      servername: normalized,
+      source: "ipv4_lookup",
+    };
+  } catch (error) {
+    logger.warn(
+      {
+        type: "smtp_ipv4_lookup_failed",
+        host: normalized,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+      "Could not resolve SMTP host to IPv4; falling back to hostname",
+    );
+
+    return {
+      connectHost: normalized,
+      servername: normalized,
+      source: "hostname_fallback",
+    };
+  }
+};
+
+const getTransporter = async () => {
+  const host = env.SMTP_HOST?.trim() ?? "";
+  const port = env.SMTP_PORT ?? 587;
+  const secure = env.SMTP_SECURE;
+  const resolved = await resolveSmtpConnectHost(host);
+  const auth = getSmtpAuth();
+  const key = [
+    resolved.connectHost,
+    port,
+    secure ? "secure" : "starttls",
+    auth?.user ?? "anonymous",
+    env.SMTP_FORCE_IPV4 ? "ipv4" : "default",
+  ].join("|");
+
+  if (transporter && transporterKey === key) {
     return transporter;
   }
 
   transporter = nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: env.SMTP_SECURE,
-    auth: getSmtpAuth(),
+    host: resolved.connectHost,
+    port,
+    secure,
+    auth,
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 20_000,
+    tls: {
+      servername: resolved.servername,
+    },
   });
+  transporterKey = key;
+
+  logger.info(
+    {
+      type: "smtp_transport_created",
+      host: resolved.connectHost,
+      originalHost: host,
+      source: resolved.source,
+      port,
+      secure,
+      forceIpv4: env.SMTP_FORCE_IPV4,
+    },
+    "SMTP transport initialized",
+  );
 
   return transporter;
 };
 
-const sendEmail = async (payload: {
-  to: string;
-  subject: string;
-  text: string;
-  html: string;
-  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
-}): Promise<EmailDispatchResult> => {
-  const normalizedTo = String(payload.to ?? "")
-    .trim()
-    .toLowerCase();
-  if (!normalizedTo) {
+const sendViaResend = async (payload: EmailPayload, normalizedTo: string): Promise<EmailDispatchResult> => {
+  if (!resendConfigured()) {
     logger.warn(
       {
         type: "email_skipped",
-        reason: "missing_recipient",
+        reason: "resend_not_configured",
+        provider: "resend",
+        to: normalizedTo,
         subject: payload.subject,
+        hasApiKey: Boolean(env.RESEND_API_KEY),
+        hasFrom: Boolean(env.RESEND_FROM || env.SMTP_FROM),
       },
-      "Recipient email is missing; email not sent",
+      "Resend is selected but configuration is incomplete; email not sent",
     );
-    return { status: "skipped", reason: "missing_recipient" };
+    return { status: "skipped", reason: "resend_not_configured" };
   }
 
+  const apiKey = env.RESEND_API_KEY!.trim();
+  const fromAddress = (env.RESEND_FROM?.trim() || env.SMTP_FROM?.trim()) as string;
+  const baseUrl = (env.RESEND_API_BASE_URL ?? "https://api.resend.com").replace(/\/+$/, "");
+  const endpoint = `${baseUrl}/emails`;
+
+  const requestBody = {
+    from: fromAddress,
+    to: [normalizedTo],
+    subject: payload.subject,
+    text: payload.text,
+    html: payload.html,
+    attachments: payload.attachments?.map((attachment) => ({
+      filename: attachment.filename,
+      content: attachment.content.toString("base64"),
+      ...(attachment.contentType ? { content_type: attachment.contentType } : {}),
+    })),
+  };
+
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 20_000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: abort.signal,
+    });
+
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      parsed = null;
+    }
+
+    if (!response.ok) {
+      const parsedRecord = parsed as Record<string, unknown> | null;
+      const errorObject =
+        parsedRecord && typeof parsedRecord.error === "object" && parsedRecord.error !== null
+          ? (parsedRecord.error as Record<string, unknown>)
+          : null;
+      const errorMessage =
+        (errorObject && typeof errorObject.message === "string" ? errorObject.message : null) ||
+        (parsedRecord && typeof parsedRecord.message === "string" ? parsedRecord.message : null) ||
+        `HTTP ${response.status}`;
+
+      logger.error(
+        {
+          type: "email_failed",
+          provider: "resend",
+          to: normalizedTo,
+          subject: payload.subject,
+          reason: errorMessage,
+          statusCode: response.status,
+        },
+        "Email delivery failed",
+      );
+      return { status: "failed", reason: errorMessage };
+    }
+
+    const parsedRecord = parsed as Record<string, unknown> | null;
+    const messageId = parsedRecord && typeof parsedRecord.id === "string" ? parsedRecord.id : undefined;
+
+    logger.info(
+      {
+        type: "email_sent",
+        provider: "resend",
+        to: normalizedTo,
+        subject: payload.subject,
+        messageId,
+      },
+      "Email delivered",
+    );
+
+    return { status: "sent", messageId };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+
+    logger.error(
+      {
+        type: "email_failed",
+        provider: "resend",
+        to: normalizedTo,
+        subject: payload.subject,
+        reason,
+        error,
+      },
+      "Email delivery failed",
+    );
+    return { status: "failed", reason };
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const sendViaSmtp = async (payload: EmailPayload, normalizedTo: string): Promise<EmailDispatchResult> => {
   if (!smtpConfigured()) {
     logger.warn(
       {
@@ -97,7 +278,7 @@ const sendEmail = async (payload: {
   }
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const mailer = getTransporter();
+    const mailer = await getTransporter();
     try {
       const info = await mailer.sendMail({
         from: env.SMTP_FROM!.trim(),
@@ -135,6 +316,7 @@ const sendEmail = async (payload: {
         );
 
         transporter = null;
+        transporterKey = null;
         continue;
       }
 
@@ -153,6 +335,30 @@ const sendEmail = async (payload: {
   }
 
   return { status: "failed", reason: "unknown_email_failure" };
+};
+
+const sendEmail = async (payload: EmailPayload): Promise<EmailDispatchResult> => {
+  const normalizedTo = String(payload.to ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedTo) {
+    logger.warn(
+      {
+        type: "email_skipped",
+        reason: "missing_recipient",
+        subject: payload.subject,
+      },
+      "Recipient email is missing; email not sent",
+    );
+    return { status: "skipped", reason: "missing_recipient" };
+  }
+
+  if (env.EMAIL_PROVIDER === "resend") {
+    return sendViaResend(payload, normalizedTo);
+  }
+
+  return sendViaSmtp(payload, normalizedTo);
 };
 
 export const sendOrderConfirmationEmail = async (payload: OrderEmailPayload): Promise<EmailDispatchResult> => {

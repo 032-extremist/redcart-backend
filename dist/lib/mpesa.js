@@ -57,6 +57,22 @@ const getTimestamp = () => {
     const sec = String(now.getSeconds()).padStart(2, "0");
     return `${yyyy}${mm}${dd}${hh}${min}${sec}`;
 };
+const safeJsonParse = (value) => {
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        return null;
+    }
+};
+const readMpesaResponse = async (response) => {
+    const rawText = await response.text();
+    const json = safeJsonParse(rawText);
+    return {
+        json,
+        rawText,
+    };
+};
 const getMpesaAccessToken = async () => {
     requireMpesaConfig();
     if (cachedToken && cachedToken.expiresAt > Date.now()) {
@@ -120,13 +136,15 @@ const initiateMpesaStkPush = async (input) => {
         },
         body: JSON.stringify(payload),
     });
-    const json = (await response.json());
+    const { json: parsed, rawText } = await readMpesaResponse(response);
+    const json = parsed ?? {};
     if (!response.ok) {
-        const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK push request failed";
-        throw new appError_1.AppError(message, 502);
+        const messageBase = json.errorMessage ?? json.ResponseDescription ?? rawText;
+        const message = messageBase && messageBase.trim().length > 0 ? messageBase : "M-Pesa STK push request failed";
+        throw new appError_1.AppError(`M-Pesa STK push request failed (${response.status}): ${message}`, 502);
     }
     if (!json.ResponseCode || !json.CheckoutRequestID || !json.MerchantRequestID) {
-        throw new appError_1.AppError("Invalid M-Pesa STK push response", 502);
+        throw new appError_1.AppError(`Invalid M-Pesa STK push response: ${rawText || "empty response"}`, 502);
     }
     return {
         merchantRequestId: json.MerchantRequestID,
@@ -167,13 +185,15 @@ const queryMpesaStkPushStatus = async (input) => {
         },
         body: JSON.stringify(payload),
     });
-    const json = (await response.json());
+    const { json: parsed, rawText } = await readMpesaResponse(response);
+    const json = parsed ?? {};
     if (!response.ok) {
-        const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK status query failed";
-        throw new appError_1.AppError(message, 502);
+        const messageBase = json.errorMessage ?? json.ResponseDescription ?? rawText;
+        const message = messageBase && messageBase.trim().length > 0 ? messageBase : "M-Pesa STK status query failed";
+        throw new appError_1.AppError(`M-Pesa STK status query failed (${response.status}): ${message}`, 502);
     }
     if (!json.ResponseCode) {
-        throw new appError_1.AppError("Invalid M-Pesa STK status response", 502);
+        throw new appError_1.AppError(`Invalid M-Pesa STK status response: ${rawText || "empty response"}`, 502);
     }
     return {
         merchantRequestId: json.MerchantRequestID ?? "",

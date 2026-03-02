@@ -203,11 +203,35 @@ const reconcilePendingMpesaPaymentsForUser = async (userId: string) => {
         });
       }
     } catch (error) {
+      const statusQueryErrorMessage =
+        error instanceof AppError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Unknown M-Pesa status query error";
+      const statusQueryErrorCode = error instanceof AppError ? error.statusCode : null;
+
+      await prisma.payment
+        .update({
+          where: { id: payment.id },
+          data: {
+            meta: mergeMpesaMeta(payment.meta, {
+              lastStatusQueryAt: new Date().toISOString(),
+              statusQuerySource: "ORDERS_LIST",
+              statusQueryError: statusQueryErrorMessage,
+              statusQueryErrorCode,
+            }),
+          },
+        })
+        .catch(() => undefined);
+
       logger.error(
         {
-          error,
           paymentId: payment.id,
           checkoutRequestId,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: statusQueryErrorMessage,
+          errorStatusCode: statusQueryErrorCode,
         },
         "Failed to reconcile pending M-Pesa payment from orders route",
       );

@@ -65,6 +65,24 @@ const getTimestamp = () => {
   return `${yyyy}${mm}${dd}${hh}${min}${sec}`;
 };
 
+const safeJsonParse = <T>(value: string): T | null => {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+};
+
+const readMpesaResponse = async <T>(response: Response) => {
+  const rawText = await response.text();
+  const json = safeJsonParse<T>(rawText);
+
+  return {
+    json,
+    rawText,
+  };
+};
+
 const getMpesaAccessToken = async () => {
   requireMpesaConfig();
 
@@ -177,7 +195,7 @@ export const initiateMpesaStkPush = async (input: MpesaStkPushInput): Promise<Mp
     body: JSON.stringify(payload),
   });
 
-  const json = (await response.json()) as {
+  const { json: parsed, rawText } = await readMpesaResponse<{
     MerchantRequestID?: string;
     CheckoutRequestID?: string;
     ResponseCode?: string;
@@ -185,15 +203,17 @@ export const initiateMpesaStkPush = async (input: MpesaStkPushInput): Promise<Mp
     CustomerMessage?: string;
     errorMessage?: string;
     errorCode?: string;
-  };
+  }>(response);
+  const json = parsed ?? {};
 
   if (!response.ok) {
-    const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK push request failed";
-    throw new AppError(message, 502);
+    const messageBase = json.errorMessage ?? json.ResponseDescription ?? rawText;
+    const message = messageBase && messageBase.trim().length > 0 ? messageBase : "M-Pesa STK push request failed";
+    throw new AppError(`M-Pesa STK push request failed (${response.status}): ${message}`, 502);
   }
 
   if (!json.ResponseCode || !json.CheckoutRequestID || !json.MerchantRequestID) {
-    throw new AppError("Invalid M-Pesa STK push response", 502);
+    throw new AppError(`Invalid M-Pesa STK push response: ${rawText || "empty response"}`, 502);
   }
 
   return {
@@ -242,7 +262,7 @@ export const queryMpesaStkPushStatus = async (input: MpesaStkQueryInput): Promis
     body: JSON.stringify(payload),
   });
 
-  const json = (await response.json()) as {
+  const { json: parsed, rawText } = await readMpesaResponse<{
     MerchantRequestID?: string;
     CheckoutRequestID?: string;
     ResponseCode?: string;
@@ -252,15 +272,17 @@ export const queryMpesaStkPushStatus = async (input: MpesaStkQueryInput): Promis
     MpesaReceiptNumber?: string;
     errorMessage?: string;
     errorCode?: string;
-  };
+  }>(response);
+  const json = parsed ?? {};
 
   if (!response.ok) {
-    const message = json.errorMessage ?? json.ResponseDescription ?? "M-Pesa STK status query failed";
-    throw new AppError(message, 502);
+    const messageBase = json.errorMessage ?? json.ResponseDescription ?? rawText;
+    const message = messageBase && messageBase.trim().length > 0 ? messageBase : "M-Pesa STK status query failed";
+    throw new AppError(`M-Pesa STK status query failed (${response.status}): ${message}`, 502);
   }
 
   if (!json.ResponseCode) {
-    throw new AppError("Invalid M-Pesa STK status response", 502);
+    throw new AppError(`Invalid M-Pesa STK status response: ${rawText || "empty response"}`, 502);
   }
 
   return {

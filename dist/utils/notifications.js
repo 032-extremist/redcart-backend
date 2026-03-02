@@ -26,6 +26,9 @@ const getTransporter = () => {
         port: env_1.env.SMTP_PORT,
         secure: env_1.env.SMTP_SECURE,
         auth: getSmtpAuth(),
+        connectionTimeout: 15_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 20_000,
     });
     return transporter;
 };
@@ -54,35 +57,49 @@ const sendEmail = async (payload) => {
         }, "SMTP is disabled or incomplete; email not sent");
         return { status: "skipped", reason: "smtp_not_configured" };
     }
-    const mailer = getTransporter();
-    try {
-        const info = await mailer.sendMail({
-            from: env_1.env.SMTP_FROM.trim(),
-            to: normalizedTo,
-            subject: payload.subject,
-            text: payload.text,
-            html: payload.html,
-            attachments: payload.attachments,
-        });
-        logger_1.logger.info({
-            type: "email_sent",
-            to: normalizedTo,
-            subject: payload.subject,
-            messageId: info.messageId,
-        }, "Email delivered");
-        return { status: "sent", messageId: info.messageId };
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const mailer = getTransporter();
+        try {
+            const info = await mailer.sendMail({
+                from: env_1.env.SMTP_FROM.trim(),
+                to: normalizedTo,
+                subject: payload.subject,
+                text: payload.text,
+                html: payload.html,
+                attachments: payload.attachments,
+            });
+            logger_1.logger.info({
+                type: "email_sent",
+                to: normalizedTo,
+                subject: payload.subject,
+                messageId: info.messageId,
+                attempt,
+            }, "Email delivered");
+            return { status: "sent", messageId: info.messageId };
+        }
+        catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            if (attempt === 1) {
+                logger_1.logger.warn({
+                    type: "email_retry",
+                    to: normalizedTo,
+                    subject: payload.subject,
+                    reason,
+                }, "Email send failed on first attempt; retrying with a fresh SMTP transport");
+                transporter = null;
+                continue;
+            }
+            logger_1.logger.error({
+                type: "email_failed",
+                to: normalizedTo,
+                subject: payload.subject,
+                reason,
+                error,
+            }, "Email delivery failed");
+            return { status: "failed", reason };
+        }
     }
-    catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        logger_1.logger.error({
-            type: "email_failed",
-            to: normalizedTo,
-            subject: payload.subject,
-            reason,
-            error,
-        }, "Email delivery failed");
-        return { status: "failed", reason };
-    }
+    return { status: "failed", reason: "unknown_email_failure" };
 };
 const sendOrderConfirmationEmail = async (payload) => {
     logger_1.logger.info({

@@ -49,8 +49,32 @@ const mergeMpesaMeta = (current, patch) => {
         },
     };
 };
-const buildMpesaCallbackUrl = (paymentId) => {
-    const base = env_1.env.MPESA_CALLBACK_BASE_URL.replace(/\/+$/, "");
+const normalizeBaseUrl = (value) => value.trim().replace(/\/+$/, "");
+const isHostedRuntime = env_1.env.NODE_ENV === "production" ||
+    process.env.RENDER === "true" ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT ||
+        process.env.RAILWAY_ENVIRONMENT_ID ||
+        process.env.RAILWAY_PROJECT_ID ||
+        process.env.FLY_APP_NAME);
+const resolveRequestBaseUrl = (req) => {
+    const forwardedProto = req
+        .header("x-forwarded-proto")
+        ?.split(",")[0]
+        ?.trim();
+    const forwardedHost = req
+        .header("x-forwarded-host")
+        ?.split(",")[0]
+        ?.trim();
+    const host = forwardedHost || req.get("host");
+    if (!host) {
+        throw new appError_1.AppError("Unable to resolve callback host", 500);
+    }
+    const protocol = forwardedProto || req.protocol || "https";
+    return normalizeBaseUrl(`${protocol}://${host}`);
+};
+const buildMpesaCallbackUrl = (paymentId, req) => {
+    const configuredBase = env_1.env.MPESA_CALLBACK_BASE_URL ? normalizeBaseUrl(env_1.env.MPESA_CALLBACK_BASE_URL) : null;
+    const base = isHostedRuntime ? resolveRequestBaseUrl(req) : configuredBase || resolveRequestBaseUrl(req);
     const hasApiV1Suffix = /\/api\/v1$/i.test(base);
     if (hasApiV1Suffix) {
         return `${base}/payments/mpesa/callback/${paymentId}`;
@@ -356,7 +380,7 @@ router.post("/mpesa/stk-push", csrf_1.requireCsrf, (0, validate_1.validate)(stkP
             });
         }
         const normalizedPhone = (0, mpesa_1.normalizeKenyanPhoneNumber)(phoneNumber);
-        const callbackUrl = buildMpesaCallbackUrl(payment.id);
+        const callbackUrl = buildMpesaCallbackUrl(payment.id, req);
         const stkResult = await (0, mpesa_1.initiateMpesaStkPush)({
             amount: Number(payment.amount),
             phoneNumber: normalizedPhone,

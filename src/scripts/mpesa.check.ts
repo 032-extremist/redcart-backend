@@ -6,7 +6,6 @@ const required = [
   "MPESA_CONSUMER_SECRET",
   "MPESA_SHORTCODE",
   "MPESA_PASSKEY",
-  "MPESA_CALLBACK_BASE_URL",
 ] as const;
 
 const getValue = (key: (typeof required)[number]) => {
@@ -34,6 +33,11 @@ async function main() {
     console.log(`Mode: ${result.mode}`);
     console.log(`Base URL: ${result.baseUrl}`);
     console.log("OAuth access token: OK");
+    if (!env.MPESA_CALLBACK_BASE_URL) {
+      console.log("Callback base URL: not set (runtime host-based callback URL will be used)");
+    } else {
+      console.log(`Callback base URL: ${env.MPESA_CALLBACK_BASE_URL}`);
+    }
     console.log("M-Pesa setup is ready for STK push tests.");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -27,8 +27,6 @@ const requireMpesaConfig = () => {
         missing.push("MPESA_SHORTCODE");
     if (!env_1.env.MPESA_PASSKEY)
         missing.push("MPESA_PASSKEY");
-    if (!env_1.env.MPESA_CALLBACK_BASE_URL)
-        missing.push("MPESA_CALLBACK_BASE_URL");
     if (missing.length) {
         throw new appError_1.AppError(`Missing M-Pesa configuration: ${missing.join(", ")}`, 500);
     }

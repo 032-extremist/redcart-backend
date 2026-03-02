@@ -1,5 +1,5 @@
 import { PaymentStatus, Prisma } from "@prisma/client";
-import { Router } from "express";
+import { Request, Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth";
 import { requireCsrf } from "../../middleware/csrf";
@@ -62,8 +62,40 @@ const mergeMpesaMeta = (current: unknown, patch: JsonRecord): Prisma.InputJsonVa
   } as Prisma.InputJsonValue;
 };
 
-const buildMpesaCallbackUrl = (paymentId: string) => {
-  const base = env.MPESA_CALLBACK_BASE_URL!.replace(/\/+$/, "");
+const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+const isHostedRuntime =
+  env.NODE_ENV === "production" ||
+  process.env.RENDER === "true" ||
+  Boolean(
+    process.env.RAILWAY_ENVIRONMENT ||
+      process.env.RAILWAY_ENVIRONMENT_ID ||
+      process.env.RAILWAY_PROJECT_ID ||
+      process.env.FLY_APP_NAME,
+  );
+
+const resolveRequestBaseUrl = (req: Request) => {
+  const forwardedProto = req
+    .header("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim();
+  const forwardedHost = req
+    .header("x-forwarded-host")
+    ?.split(",")[0]
+    ?.trim();
+  const host = forwardedHost || req.get("host");
+
+  if (!host) {
+    throw new AppError("Unable to resolve callback host", 500);
+  }
+
+  const protocol = forwardedProto || req.protocol || "https";
+  return normalizeBaseUrl(`${protocol}://${host}`);
+};
+
+const buildMpesaCallbackUrl = (paymentId: string, req: Request) => {
+  const configuredBase = env.MPESA_CALLBACK_BASE_URL ? normalizeBaseUrl(env.MPESA_CALLBACK_BASE_URL) : null;
+  const base = isHostedRuntime ? resolveRequestBaseUrl(req) : configuredBase || resolveRequestBaseUrl(req);
   const hasApiV1Suffix = /\/api\/v1$/i.test(base);
 
   if (hasApiV1Suffix) {
@@ -422,7 +454,7 @@ router.post("/mpesa/stk-push", requireCsrf, validate(stkPushSchema), async (req,
     }
 
     const normalizedPhone = normalizeKenyanPhoneNumber(phoneNumber);
-    const callbackUrl = buildMpesaCallbackUrl(payment.id);
+    const callbackUrl = buildMpesaCallbackUrl(payment.id, req);
 
     const stkResult = await initiateMpesaStkPush({
       amount: Number(payment.amount),

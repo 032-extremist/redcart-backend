@@ -4,6 +4,8 @@ exports.queryMpesaStkPushStatus = exports.initiateMpesaStkPush = exports.verifyM
 const env_1 = require("../config/env");
 const appError_1 = require("../utils/appError");
 const TOKEN_BUFFER_SECONDS = 60;
+const SANDBOX_SHORTCODE = "174379";
+const SANDBOX_PASSKEY = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 let cachedToken = null;
 const normalizeBaseUrl = (value) => value.replace(/\/+$/, "");
 const getMpesaBaseUrl = () => {
@@ -29,6 +31,12 @@ const requireMpesaConfig = () => {
         missing.push("MPESA_PASSKEY");
     if (missing.length) {
         throw new appError_1.AppError(`Missing M-Pesa configuration: ${missing.join(", ")}`, 500);
+    }
+    const shortCode = env_1.env.MPESA_SHORTCODE?.trim();
+    const passKey = env_1.env.MPESA_PASSKEY?.trim();
+    if (env_1.env.MPESA_ENV === "production" &&
+        (shortCode === SANDBOX_SHORTCODE || passKey === SANDBOX_PASSKEY)) {
+        throw new appError_1.AppError("M-Pesa is set to production but sandbox credentials were detected. Use real production shortcode/passkey.", 500);
     }
 };
 const normalizeKenyanPhoneNumber = (input) => {

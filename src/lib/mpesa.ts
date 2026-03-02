@@ -2,6 +2,8 @@ import { env } from "../config/env";
 import { AppError } from "../utils/appError";
 
 const TOKEN_BUFFER_SECONDS = 60;
+const SANDBOX_SHORTCODE = "174379";
+const SANDBOX_PASSKEY = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
@@ -31,6 +33,19 @@ const requireMpesaConfig = () => {
 
   if (missing.length) {
     throw new AppError(`Missing M-Pesa configuration: ${missing.join(", ")}`, 500);
+  }
+
+  const shortCode = env.MPESA_SHORTCODE?.trim();
+  const passKey = env.MPESA_PASSKEY?.trim();
+
+  if (
+    env.MPESA_ENV === "production" &&
+    (shortCode === SANDBOX_SHORTCODE || passKey === SANDBOX_PASSKEY)
+  ) {
+    throw new AppError(
+      "M-Pesa is set to production but sandbox credentials were detected. Use real production shortcode/passkey.",
+      500,
+    );
   }
 };
 

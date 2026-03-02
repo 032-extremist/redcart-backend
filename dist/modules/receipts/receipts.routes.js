@@ -179,33 +179,39 @@ router.get("/:receiptId/download", (0, validate_1.validate)(receiptIdSchema), as
     try {
         const receipt = await (0, receipts_service_1.getReceiptByIdForUser)(req.params.receiptId, req.auth.userId);
         const pdfBuffer = await generateReceiptPdfBuffer(receipt);
-        const emailResult = await (0, notifications_1.sendReceiptCopyEmail)({
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
+        res.setHeader("X-Receipt-Email-Status", "queued");
+        res.send(pdfBuffer);
+        void (0, notifications_1.sendReceiptCopyEmail)({
             orderId: receipt.orderId,
             email: receipt.order.shippingEmail,
             name: receipt.order.shippingName || "Customer",
             receiptNumber: receipt.receiptNumber,
             pdfBuffer,
+        })
+            .then((emailResult) => {
+            logger_1.logger.info({
+                type: "receipt_email_dispatch",
+                receiptId: receipt.id,
+                orderId: receipt.orderId,
+                receiptNumber: receipt.receiptNumber,
+                recipientEmail: receipt.order.shippingEmail,
+                status: emailResult.status,
+                reason: emailResult.reason,
+                messageId: emailResult.messageId,
+            }, "Processed receipt copy email dispatch");
+        })
+            .catch((dispatchError) => {
+            logger_1.logger.error({
+                type: "receipt_email_dispatch",
+                receiptId: receipt.id,
+                orderId: receipt.orderId,
+                receiptNumber: receipt.receiptNumber,
+                recipientEmail: receipt.order.shippingEmail,
+                error: dispatchError,
+            }, "Receipt email dispatch crashed after download response");
         });
-        logger_1.logger.info({
-            type: "receipt_email_dispatch",
-            receiptId: receipt.id,
-            orderId: receipt.orderId,
-            receiptNumber: receipt.receiptNumber,
-            recipientEmail: receipt.order.shippingEmail,
-            status: emailResult.status,
-            reason: emailResult.reason,
-            messageId: emailResult.messageId,
-        }, "Processed receipt copy email dispatch");
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
-        res.setHeader("X-Receipt-Email-Status", emailResult.status);
-        if (emailResult.reason) {
-            res.setHeader("X-Receipt-Email-Reason", emailResult.reason);
-        }
-        if (emailResult.messageId) {
-            res.setHeader("X-Receipt-Email-Message-Id", emailResult.messageId);
-        }
-        res.send(pdfBuffer);
     }
     catch (error) {
         next(error);

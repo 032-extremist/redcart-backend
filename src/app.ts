@@ -60,7 +60,11 @@ app.use(
     exposedHeaders: ["X-Receipt-Email-Status", "X-Receipt-Email-Reason", "X-Receipt-Email-Message-Id"],
   }),
 );
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));

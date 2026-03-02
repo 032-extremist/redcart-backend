@@ -225,38 +225,47 @@ router.get("/:receiptId/download", validate(receiptIdSchema), async (req, res, n
     const receipt = await getReceiptByIdForUser(req.params.receiptId, req.auth!.userId);
 
     const pdfBuffer = await generateReceiptPdfBuffer(receipt);
-    const emailResult = await sendReceiptCopyEmail({
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
+    res.setHeader("X-Receipt-Email-Status", "queued");
+    res.send(pdfBuffer);
+
+    void sendReceiptCopyEmail({
       orderId: receipt.orderId,
       email: receipt.order.shippingEmail,
       name: receipt.order.shippingName || "Customer",
       receiptNumber: receipt.receiptNumber,
       pdfBuffer,
-    });
-
-    logger.info(
-      {
-        type: "receipt_email_dispatch",
-        receiptId: receipt.id,
-        orderId: receipt.orderId,
-        receiptNumber: receipt.receiptNumber,
-        recipientEmail: receipt.order.shippingEmail,
-        status: emailResult.status,
-        reason: emailResult.reason,
-        messageId: emailResult.messageId,
-      },
-      "Processed receipt copy email dispatch",
-    );
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${receipt.receiptNumber}.pdf"`);
-    res.setHeader("X-Receipt-Email-Status", emailResult.status);
-    if (emailResult.reason) {
-      res.setHeader("X-Receipt-Email-Reason", emailResult.reason);
-    }
-    if (emailResult.messageId) {
-      res.setHeader("X-Receipt-Email-Message-Id", emailResult.messageId);
-    }
-    res.send(pdfBuffer);
+    })
+      .then((emailResult) => {
+        logger.info(
+          {
+            type: "receipt_email_dispatch",
+            receiptId: receipt.id,
+            orderId: receipt.orderId,
+            receiptNumber: receipt.receiptNumber,
+            recipientEmail: receipt.order.shippingEmail,
+            status: emailResult.status,
+            reason: emailResult.reason,
+            messageId: emailResult.messageId,
+          },
+          "Processed receipt copy email dispatch",
+        );
+      })
+      .catch((dispatchError) => {
+        logger.error(
+          {
+            type: "receipt_email_dispatch",
+            receiptId: receipt.id,
+            orderId: receipt.orderId,
+            receiptNumber: receipt.receiptNumber,
+            recipientEmail: receipt.order.shippingEmail,
+            error: dispatchError,
+          },
+          "Receipt email dispatch crashed after download response",
+        );
+      });
   } catch (error) {
     next(error);
   }

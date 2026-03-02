@@ -381,6 +381,16 @@ router.post("/mpesa/stk-push", csrf_1.requireCsrf, (0, validate_1.validate)(stkP
         }
         const normalizedPhone = (0, mpesa_1.normalizeKenyanPhoneNumber)(phoneNumber);
         const callbackUrl = buildMpesaCallbackUrl(payment.id, req);
+        logger_1.logger.info({
+            type: "mpesa_stk_initiation_attempt",
+            paymentId: payment.id,
+            orderId: payment.orderId,
+            userId: req.auth.userId,
+            env: env_1.env.MPESA_ENV,
+            shortCode: env_1.env.MPESA_SHORTCODE,
+            callbackUrl,
+            normalizedPhone,
+        }, "Initiating M-Pesa STK push");
         const stkResult = await (0, mpesa_1.initiateMpesaStkPush)({
             amount: Number(payment.amount),
             phoneNumber: normalizedPhone,
@@ -420,6 +430,13 @@ router.post("/mpesa/stk-push", csrf_1.requireCsrf, (0, validate_1.validate)(stkP
         });
     }
     catch (error) {
+        logger_1.logger.error({
+            type: "mpesa_stk_initiation_failed",
+            paymentId: req.body?.paymentId,
+            userId: req.auth?.userId,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+        }, "M-Pesa STK initiation failed");
         next(error);
     }
 });

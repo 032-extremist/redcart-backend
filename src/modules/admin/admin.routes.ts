@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { OrderStatus, PaymentStatus, Prisma, Role } from "@prisma/client";
 import { Router } from "express";
 import fs from "fs";
 import multer from "multer";
@@ -91,6 +91,84 @@ const stockUpdateSchema = z.object({
   params: z.object({ productId: z.string().min(1) }),
 });
 
+const ordersQuerySchema = z.object({
+  body: z.object({}),
+  query: z.object({
+    paymentStatus: z.nativeEnum(PaymentStatus).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }),
+  params: z.object({}),
+});
+
+const orderIdParamSchema = z.object({
+  body: z.object({}),
+  query: z.object({}),
+  params: z.object({ orderId: z.string().min(1) }),
+});
+
+const updateDeliverySchema = z.object({
+  body: z.object({
+    delivered: z.boolean(),
+  }),
+  query: z.object({}),
+  params: z.object({ orderId: z.string().min(1) }),
+});
+
+type AdminOrderWithRelations = Prisma.OrderGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        email: true;
+        firstName: true;
+        lastName: true;
+      };
+    };
+    payment: true;
+    items: {
+      include: {
+        product: {
+          select: {
+            id: true;
+            name: true;
+            slug: true;
+            imageUrl: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
+const toAdminOrderResponse = (order: AdminOrderWithRelations) => ({
+  id: order.id,
+  user: order.user,
+  paymentMethod: order.paymentMethod,
+  paymentStatus: order.payment?.status ?? null,
+  transactionCode: order.payment?.transactionRef ?? null,
+  orderStatus: order.status,
+  delivered: order.status === OrderStatus.DELIVERED,
+  shipping: {
+    name: order.shippingName,
+    phone: order.shippingPhone,
+    email: order.shippingEmail,
+    street: order.shippingStreet,
+    city: order.shippingCity,
+    country: order.shippingCountry,
+  },
+  total: Number(order.total),
+  createdAt: order.createdAt,
+  updatedAt: order.updatedAt,
+  items: order.items.map((item) => ({
+    id: item.id,
+    quantity: item.quantity,
+    unitPrice: Number(item.unitPrice),
+    subtotal: Number(item.subtotal),
+    product: item.product,
+  })),
+});
+
 router.use(authenticate, requireRole(Role.ADMIN));
 
 router.post("/products/image", requireCsrf, uploadImage.single("image"), async (req, res, next) => {
@@ -155,6 +233,159 @@ router.get("/analytics/sales", async (_req, res, next) => {
         revenue: Number(item._sum.subtotal ?? 0),
       })),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/orders", validate(ordersQuerySchema), async (req, res, next) => {
+  try {
+    const { paymentStatus, page, limit } = req.query as unknown as {
+      paymentStatus?: PaymentStatus;
+      page: number;
+      limit: number;
+    };
+
+    const where: Prisma.OrderWhereInput = paymentStatus
+      ? {
+          payment: {
+            is: {
+              status: paymentStatus,
+            },
+          },
+        }
+      : {
+          payment: {
+            is: {
+              status: {
+                in: [PaymentStatus.PENDING, PaymentStatus.SUCCESS],
+              },
+            },
+          },
+        };
+
+    const skip = (page - 1) * limit;
+
+    const [total, orders] = await Promise.all([
+      prisma.order.count({ where }),
+      prisma.order.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+          payment: true,
+          items: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  imageUrl: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    res.json({
+      data: orders.map(toAdminOrderResponse),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/orders/:orderId/delivery", requireCsrf, validate(updateDeliverySchema), async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+    const { delivered } = req.body;
+
+    const current = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { payment: true },
+    });
+
+    if (!current) {
+      throw new AppError("Order not found", 404);
+    }
+
+    const fallbackStatus =
+      current.payment?.status === PaymentStatus.SUCCESS ? OrderStatus.CONFIRMED : OrderStatus.PENDING_PAYMENT;
+
+    const nextStatus = delivered ? OrderStatus.DELIVERED : fallbackStatus;
+
+    const updated = await prisma.order.update({
+      where: { id: orderId },
+      data: { status: nextStatus },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+        payment: true,
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                imageUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res.json(toAdminOrderResponse(updated));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/orders/:orderId", requireCsrf, validate(orderIdParamSchema), async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+
+    const existing = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true },
+    });
+
+    if (!existing) {
+      throw new AppError("Order not found", 404);
+    }
+
+    if (existing.status !== OrderStatus.DELIVERED) {
+      throw new AppError("Only delivered orders can be deleted", 409);
+    }
+
+    await prisma.order.delete({ where: { id: orderId } });
+
+    res.status(204).send();
   } catch (error) {
     next(error);
   }

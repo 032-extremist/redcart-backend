@@ -86,6 +86,54 @@ const stockUpdateSchema = zod_1.z.object({
     query: zod_1.z.object({}),
     params: zod_1.z.object({ productId: zod_1.z.string().min(1) }),
 });
+const ordersQuerySchema = zod_1.z.object({
+    body: zod_1.z.object({}),
+    query: zod_1.z.object({
+        paymentStatus: zod_1.z.nativeEnum(client_1.PaymentStatus).optional(),
+        page: zod_1.z.coerce.number().int().min(1).default(1),
+        limit: zod_1.z.coerce.number().int().min(1).max(200).default(50),
+    }),
+    params: zod_1.z.object({}),
+});
+const orderIdParamSchema = zod_1.z.object({
+    body: zod_1.z.object({}),
+    query: zod_1.z.object({}),
+    params: zod_1.z.object({ orderId: zod_1.z.string().min(1) }),
+});
+const updateDeliverySchema = zod_1.z.object({
+    body: zod_1.z.object({
+        delivered: zod_1.z.boolean(),
+    }),
+    query: zod_1.z.object({}),
+    params: zod_1.z.object({ orderId: zod_1.z.string().min(1) }),
+});
+const toAdminOrderResponse = (order) => ({
+    id: order.id,
+    user: order.user,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.payment?.status ?? null,
+    transactionCode: order.payment?.transactionRef ?? null,
+    orderStatus: order.status,
+    delivered: order.status === client_1.OrderStatus.DELIVERED,
+    shipping: {
+        name: order.shippingName,
+        phone: order.shippingPhone,
+        email: order.shippingEmail,
+        street: order.shippingStreet,
+        city: order.shippingCity,
+        country: order.shippingCountry,
+    },
+    total: Number(order.total),
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    items: order.items.map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice),
+        subtotal: Number(item.subtotal),
+        product: item.product,
+    })),
+});
 router.use(auth_1.authenticate, (0, auth_1.requireRole)(client_1.Role.ADMIN));
 router.post("/products/image", csrf_1.requireCsrf, uploadImage.single("image"), async (req, res, next) => {
     try {
@@ -143,6 +191,139 @@ router.get("/analytics/sales", async (_req, res, next) => {
                 revenue: Number(item._sum.subtotal ?? 0),
             })),
         });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get("/orders", (0, validate_1.validate)(ordersQuerySchema), async (req, res, next) => {
+    try {
+        const { paymentStatus, page, limit } = req.query;
+        const where = paymentStatus
+            ? {
+                payment: {
+                    is: {
+                        status: paymentStatus,
+                    },
+                },
+            }
+            : {
+                payment: {
+                    is: {
+                        status: {
+                            in: [client_1.PaymentStatus.PENDING, client_1.PaymentStatus.SUCCESS],
+                        },
+                    },
+                },
+            };
+        const skip = (page - 1) * limit;
+        const [total, orders] = await Promise.all([
+            prisma_1.prisma.order.count({ where }),
+            prisma_1.prisma.order.findMany({
+                where,
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            firstName: true,
+                            lastName: true,
+                        },
+                    },
+                    payment: true,
+                    items: {
+                        include: {
+                            product: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    slug: true,
+                                    imageUrl: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: { createdAt: "desc" },
+                skip,
+                take: limit,
+            }),
+        ]);
+        res.json({
+            data: orders.map(toAdminOrderResponse),
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.max(1, Math.ceil(total / limit)),
+            },
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.patch("/orders/:orderId/delivery", csrf_1.requireCsrf, (0, validate_1.validate)(updateDeliverySchema), async (req, res, next) => {
+    try {
+        const { orderId } = req.params;
+        const { delivered } = req.body;
+        const current = await prisma_1.prisma.order.findUnique({
+            where: { id: orderId },
+            include: { payment: true },
+        });
+        if (!current) {
+            throw new appError_1.AppError("Order not found", 404);
+        }
+        const fallbackStatus = current.payment?.status === client_1.PaymentStatus.SUCCESS ? client_1.OrderStatus.CONFIRMED : client_1.OrderStatus.PENDING_PAYMENT;
+        const nextStatus = delivered ? client_1.OrderStatus.DELIVERED : fallbackStatus;
+        const updated = await prisma_1.prisma.order.update({
+            where: { id: orderId },
+            data: { status: nextStatus },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true,
+                    },
+                },
+                payment: true,
+                items: {
+                    include: {
+                        product: {
+                            select: {
+                                id: true,
+                                name: true,
+                                slug: true,
+                                imageUrl: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        res.json(toAdminOrderResponse(updated));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.delete("/orders/:orderId", csrf_1.requireCsrf, (0, validate_1.validate)(orderIdParamSchema), async (req, res, next) => {
+    try {
+        const { orderId } = req.params;
+        const existing = await prisma_1.prisma.order.findUnique({
+            where: { id: orderId },
+            select: { id: true, status: true },
+        });
+        if (!existing) {
+            throw new appError_1.AppError("Order not found", 404);
+        }
+        if (existing.status !== client_1.OrderStatus.DELIVERED) {
+            throw new appError_1.AppError("Only delivered orders can be deleted", 409);
+        }
+        await prisma_1.prisma.order.delete({ where: { id: orderId } });
+        res.status(204).send();
     }
     catch (error) {
         next(error);

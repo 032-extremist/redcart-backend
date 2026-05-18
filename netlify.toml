@@ -1,0 +1,18 @@
+[build]
+  command = "npm run prisma:deploy && npx prisma generate && npm run build"
+  publish = "public"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["@prisma/client", "express", "serverless-http"]
+  included_files = ["prisma/schema.prisma", "node_modules/.prisma/client/**"]
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true

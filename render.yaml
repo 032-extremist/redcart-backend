@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: redcart-backend
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npm run start:migrate
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 2h
+      - key: CLIENT_URL
+        sync: false
+      - key: DB_STARTUP_MAX_RETRIES
+        value: 12
+      - key: DB_STARTUP_RETRY_MS
+        value: 3000
+      - key: PRISMA_CLIENT_ENGINE_TYPE
+        value: library
+      - key: MPESA_ENABLED
+        value: false
+      - key: SMTP_ENABLED
+        value: false
+      - key: EMAIL_PROVIDER
+        value: resend

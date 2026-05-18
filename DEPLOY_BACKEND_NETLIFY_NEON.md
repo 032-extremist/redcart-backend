@@ -28,11 +28,13 @@ In Netlify:
 Add new project > Import an existing project
 Provider: GitHub
 Repository: your RedCart repo
-Base directory: redcart-backend-main
+Base directory: leave blank
 Build command: npm run prisma:deploy && npx prisma generate && npm run build
 Publish directory: public
 Functions directory: netlify/functions
 ```
+
+Use `redcart-backend-main` as the base directory only if this backend folder is inside a larger repository. If you are deploying `https://github.com/032-extremist/redcart-backend`, leave the base directory empty because the repo root is already the backend.
 
 This folder includes `netlify.toml`, so Netlify can also read those settings automatically.
 

@@ -50,6 +50,7 @@ Add:
 
 ```env
 NODE_ENV=production
+NPM_FLAGS=--include=dev
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=2h
@@ -61,6 +62,8 @@ MPESA_ENABLED=false
 SMTP_ENABLED=false
 EMAIL_PROVIDER=resend
 ```
+
+`NPM_FLAGS=--include=dev` is required because this backend compiles TypeScript on Netlify. Without it, `NODE_ENV=production` makes Netlify skip `devDependencies`, including the TypeScript type packages used by `npm run build`.
 
 ## 4. Deploy And Test
 

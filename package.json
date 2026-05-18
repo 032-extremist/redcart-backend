@@ -11,6 +11,7 @@
     "prisma:deploy": "npx prisma migrate deploy",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:seed:if-enabled": "tsx src/scripts/seed-if-enabled.ts",
     "mpesa:check": "tsx src/scripts/mpesa.check.ts",
     "smtp:check": "tsx src/scripts/smtp.check.ts",
     "lint": "tsc --noEmit"

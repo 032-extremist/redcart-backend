@@ -1,6 +1,6 @@
 [build]
   base = "."
-  command = "npm run prisma:deploy && npx prisma generate && npm run build"
+  command = "npm run prisma:deploy && npx prisma generate && npm run build && npm run prisma:seed:if-enabled"
   publish = "public"
 
 [build.environment]

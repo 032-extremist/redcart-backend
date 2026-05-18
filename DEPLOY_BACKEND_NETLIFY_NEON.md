@@ -29,7 +29,7 @@ Add new project > Import an existing project
 Provider: GitHub
 Repository: your RedCart repo
 Base directory: leave blank, or use .
-Build command: npm run prisma:deploy && npx prisma generate && npm run build
+Build command: npm run prisma:deploy && npx prisma generate && npm run build && npm run prisma:seed:if-enabled
 Publish directory: public
 Functions directory: netlify/functions
 ```
@@ -64,6 +64,14 @@ EMAIL_PROVIDER=resend
 ```
 
 `NPM_FLAGS=--include=dev` is required because this backend compiles TypeScript on Netlify. Without it, `NODE_ENV=production` makes Netlify skip `devDependencies`, including the TypeScript type packages used by `npm run build`.
+
+To seed the live Neon database from Netlify without copying the database URL locally, add this environment variable temporarily and redeploy:
+
+```env
+SEED_DATABASE_ON_BUILD=true
+```
+
+After the seed deploy finishes, remove `SEED_DATABASE_ON_BUILD` or set it to `false`. The seed is idempotent, but leaving it enabled will refresh seeded product details on every deploy.
 
 ## 4. Deploy And Test
 

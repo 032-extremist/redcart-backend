@@ -94,4 +94,5 @@ Then redeploy the frontend.
 - Netlify runs this Express app as a serverless function, not an always-on server.
 - Prisma migrations run during Netlify's build using `npm run prisma:deploy`.
 - Use Neon's pooled connection string to avoid too many database connections from serverless functions.
+- Netlify Function disk storage is temporary. Product images uploaded through the admin panel can disappear after a cold start, so use hosted image URLs or object storage for production images.
 - If you need demo products/users, run `npm run prisma:seed` against the Neon database once.

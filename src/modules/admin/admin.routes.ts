@@ -10,19 +10,19 @@ import { validate } from "../../middleware/validate";
 import { prisma } from "../../lib/prisma";
 import { slugify } from "../../utils/slugify";
 import { AppError } from "../../utils/appError";
+import { productUploadsDir } from "../../config/uploads";
 
 const router = Router();
-const uploadsDir = path.resolve(process.cwd(), "uploads", "products");
 
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+if (!fs.existsSync(productUploadsDir)) {
+  fs.mkdirSync(productUploadsDir, { recursive: true });
 }
 
 const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, productUploadsDir);
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
